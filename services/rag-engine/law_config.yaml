@@ -1,0 +1,160 @@
+# 수소법률 RAG 시스템 - 법령 수집 설정
+
+# 필수 수집 법령 (우선순위 순)
+target_laws:
+  # 1. 고압가스 안전관리법
+  - law_name: "고압가스 안전관리에 관한 법률"
+    short_name: "고압가스법"
+    law_number: "법률제20219호"
+    priority: 1
+    components:
+      - type: "법률"
+        required: true
+      - type: "시행령"
+        required: true
+      - type: "시행규칙"
+        required: true
+      - type: "별표"
+        required: true
+        note: "PDF 확인 필요"
+    keywords:
+      - "고압가스"
+      - "수소"
+      - "충전소"
+      - "저장소"
+      - "안전검사"
+
+  # 2. 수소경제 육성 및 수소 안전관리에 관한 법률
+  - law_name: "수소경제 육성 및 수소 안전관리에 관한 법률"
+    short_name: "수소법"
+    law_number: "법률제16942호"
+    priority: 1
+    components:
+      - type: "법률"
+        required: true
+      - type: "시행령"
+        required: true
+      - type: "시행규칙"
+        required: true
+      - type: "별표"
+        required: true
+    keywords:
+      - "수소경제"
+      - "수소충전소"
+      - "수소생산"
+      - "수소저장"
+      - "청정수소"
+      - "수소안전"
+
+# 선택적 수집 법령 (추후 확장 시)
+optional_laws:
+  - law_name: "액화석유가스의 안전관리 및 사업법"
+    short_name: "액화석유가스법"
+    reason: "수소 관련 가스 안전 규정 참고"
+
+  - law_name: "집단에너지사업법"
+    short_name: "집단에너지법"
+    reason: "수소 에너지 공급 관련"
+
+# 수집 설정
+collection_settings:
+  # API 설정
+  api_source: "국가법령정보센터"
+  api_url: "http://www.law.go.kr/DRF/lawService.do"
+  api_key_env: "LAW_API_KEY"  # 환경변수에서 로드
+
+  # 수집 주기
+  schedule:
+    initial: true  # 초기 전체 수집
+    incremental: "daily"  # 증분 업데이트 (매일)
+    full_refresh: "monthly"  # 전체 재수집 (매월)
+
+  # 파싱 설정
+  parsing:
+    structure_levels:
+      - "장"  # Chapter
+      - "조"  # Article
+      - "항"  # Paragraph
+      - "호"  # Item
+      - "목"  # Subitem
+
+    extract_references: true  # 다른 조항 참조 추출
+    extract_definitions: true  # 정의 조항 별도 추출
+    extract_penalties: true    # 벌칙 조항 별도 추출
+
+  # 청킹 전략
+  chunking:
+    method: "semantic"  # 의미 단위로 분할
+    max_chunk_size: 512  # 토큰
+    overlap: 50  # 중첩 토큰
+
+    # 법률 문서 특화 규칙
+    rules:
+      - "짧은 조 (<500자): 전체를 하나의 청크로"
+      - "긴 조 (>500자): 항 단위로 분할"
+      - "별표: 독립된 청크로 처리"
+      - "정의 조항: 별도 청크"
+
+# 저장소 설정
+storage:
+  # PostgreSQL (메타데이터)
+  postgres:
+    enabled: true
+    connection: "env:DATABASE_URL"
+
+  # ChromaDB (벡터 검색)
+  vector_db:
+    type: "chromadb"  # 개발 환경
+    path: "./chroma_db"
+    collection_name: "hydrogen_law"
+
+  # Pinecone (프로덕션)
+  # vector_db:
+  #   type: "pinecone"
+  #   api_key: "env:PINECONE_API_KEY"
+  #   environment: "gcp-starter"
+  #   index_name: "hydrogen-law"
+
+# 임베딩 설정
+embedding:
+  model: "jhgan/ko-sroberta-multitask"
+  dimensions: 768
+  device: "cpu"  # 또는 "cuda"
+  batch_size: 32
+
+# 검색 설정
+search:
+  hybrid:
+    enabled: true
+    vector_weight: 0.7  # 벡터 검색 가중치
+    bm25_weight: 0.3    # 키워드 검색 가중치
+
+  reranking:
+    enabled: true
+    method: "rule_based"  # LLM 없이 규칙 기반
+
+  top_k: 10  # 기본 검색 결과 수
+
+# 컴플라이언스 규칙
+compliance_rules:
+  # 사업 유형별 필수 법령 매핑
+  business_types:
+    - type: "수소충전소_설치_운영"
+      required_laws:
+        - law: "수소법"
+          articles: ["제18조", "제19조", "제20조"]
+        - law: "고압가스법"
+          articles: ["제3조", "제5조"]
+
+    - type: "수소생산_시설"
+      required_laws:
+        - law: "수소법"
+          articles: ["제10조", "제11조"]
+        - law: "고압가스법"
+          articles: ["제12조"]
+
+# 로깅 설정
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/rag_engine.log"
