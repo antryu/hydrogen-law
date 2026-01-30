@@ -100,9 +100,9 @@ export function SearchResults({ results }: SearchResultsProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* 본문 */}
-            <div className="prose prose-sm max-w-none">
+            <div className="w-full">
               <div
-                className="text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg whitespace-pre-wrap"
+                className="text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg whitespace-pre-wrap w-full"
                 dangerouslySetInnerHTML={{ __html: article.highlighted_content }}
               />
             </div>
