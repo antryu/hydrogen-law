@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Search, Zap, Shield, Clock, Database, CheckCircle2 } from 'lucide-react';
+import { Search, Scale, Clock, CheckCircle2 } from 'lucide-react';
 import type { SearchResponse } from '@/types/search';
 import { SearchResults } from '@/components/SearchResults';
 import { Button } from '@/components/ui/button';
@@ -54,7 +54,7 @@ export default function HomePage() {
         <div className="space-y-3 sm:space-y-4">
           <div className="flex justify-center">
             <div className="p-2.5 sm:p-3 bg-primary/10 rounded-xl">
-              <Search className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
+              <Scale className="w-6 h-6 sm:w-8 sm:h-8 text-primary" />
             </div>
           </div>
           <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold">법령 검색</h2>
