@@ -77,3 +77,6 @@ uvicorn main:app --reload
 ## 라이선스
 
 MIT
+
+
+<!-- Force deployment: Fri Jan 30 13:56:53 KST 2026 -->
