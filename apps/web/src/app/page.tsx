@@ -120,7 +120,14 @@ export default function HomePage() {
       </section>
 
       {/* Search Results */}
-      {results && <SearchResults results={results} />}
+      {results && (
+        <>
+          <div className="text-xs text-gray-400 text-center mb-2">
+            v1.0.1 - 검색 결과 최대 100개 표시
+          </div>
+          <SearchResults results={results} />
+        </>
+      )}
     </div>
   );
 }
