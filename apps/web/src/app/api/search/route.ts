@@ -63,6 +63,20 @@ export async function POST(request: Request) {
       // Convert newlines to <br> tags for HTML rendering
       highlightedContent = highlightedContent.replace(/\n/g, '<br>');
 
+      // Improve readability with formatting
+      // Make article/clause numbers bold
+      highlightedContent = highlightedContent.replace(/(제\d+조의?\d*)/g, '<strong class="text-gray-900">$1</strong>');
+      highlightedContent = highlightedContent.replace(/(별표\s*\d+)/g, '<strong class="text-gray-900">$1</strong>');
+
+      // Add indentation for items (①, ②, etc.)
+      highlightedContent = highlightedContent.replace(/<br>([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮])/g, '<br><span class="inline-block ml-4">$1');
+
+      // Add indentation for numbered items (1., 2., etc.)
+      highlightedContent = highlightedContent.replace(/<br>(\d+\.)/g, '<br><span class="inline-block ml-8">$1');
+
+      // Add indentation for lettered items (가., 나., etc.)
+      highlightedContent = highlightedContent.replace(/<br>([가-힣]\.)/g, '<br><span class="inline-block ml-12">$1');
+
       // Normalize score: highest result = 100%, others scaled proportionally
       const normalizedScore = (row.relevance_score / maxScore) * 100;
 
