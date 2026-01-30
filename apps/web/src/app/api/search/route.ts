@@ -68,6 +68,7 @@ export async function POST(request: Request) {
         content: row.content,
         highlighted_content: highlightedContent,
         relevance_score: normalizedScore,
+        article_type: row.metadata.article_type || 'article',
         related_articles: []
       };
     });

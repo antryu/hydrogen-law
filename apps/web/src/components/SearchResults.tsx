@@ -78,9 +78,16 @@ export function SearchResults({ results }: SearchResultsProps) {
                   {i + 1}
                 </div>
                 <div className="space-y-1 flex-1">
-                  <CardTitle className="text-xl leading-tight">
-                    {article.law_name} {article.article_number}
-                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-xl leading-tight">
+                      {article.law_name} {article.article_number}
+                    </CardTitle>
+                    {article.article_type === 'appendix' && (
+                      <Badge variant="secondary" className="text-xs">
+                        별표
+                      </Badge>
+                    )}
+                  </div>
                   <CardDescription className="text-base">
                     {article.title}
                   </CardDescription>

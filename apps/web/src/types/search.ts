@@ -5,6 +5,7 @@ export interface Article {
   content: string;
   highlighted_content: string;
   relevance_score: number;
+  article_type?: 'article' | 'appendix';
   related_articles?: RelatedArticle[];
 }
 
