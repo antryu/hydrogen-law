@@ -40,9 +40,9 @@ export default function RootLayout({
             </div>
           </header>
 
-          {/* Main Content - Centered Container */}
+          {/* Main Content - Wider Container for Search Results */}
           <main className="min-h-screen">
-            <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '2rem 1.5rem' }}>
+            <div style={{ maxWidth: '96rem', margin: '0 auto', padding: '2rem 1.5rem' }}>
               {children}
             </div>
           </main>
