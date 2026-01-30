@@ -102,7 +102,7 @@ export function SearchResults({ results }: SearchResultsProps) {
             {/* 본문 */}
             <div className="prose prose-sm max-w-none">
               <div
-                className="text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg"
+                className="text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg whitespace-pre-wrap"
                 dangerouslySetInnerHTML={{ __html: article.highlighted_content }}
               />
             </div>
