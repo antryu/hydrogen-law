@@ -60,3 +60,4 @@ htmlcov/
 # Package manager lock files (optional, keep if you want reproducible builds)
 # package-lock.json
 # pnpm-lock.yaml
+.vercel
