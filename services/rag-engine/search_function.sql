@@ -2,7 +2,7 @@
 -- Simple tokenizer doesn't work well for Korean text, so using pattern matching instead
 CREATE OR REPLACE FUNCTION search_law_documents(
   search_query TEXT,
-  max_results INT DEFAULT 10
+  max_results INT DEFAULT 100
 )
 RETURNS TABLE (
   id TEXT,
