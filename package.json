@@ -1,0 +1,26 @@
+{
+  "name": "hydrogen-law-rag",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "lint": "cd apps/web && npm run lint",
+    "type-check": "cd apps/web && npm run type-check",
+    "build": "cd apps/web && npm run build",
+    "test": "cd apps/web && npm run test",
+    "test:python": "cd services/rag-engine && python -m pytest tests/ -v",
+    "verify": "npm run lint && npm run type-check && npm run build && npm run test && npm run test:python"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2"
+  },
+  "lint-staged": {
+    "apps/web/src/**/*.{ts,tsx}": [
+      "bash -c 'cd apps/web && npx tsc --noEmit && npx vitest run'"
+    ],
+    "services/rag-engine/**/*.py": [
+      "bash -c 'cd services/rag-engine && python -m black --check . && python -m pytest tests/ -v'"
+    ]
+  }
+}
