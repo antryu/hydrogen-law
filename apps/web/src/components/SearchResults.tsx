@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { Clock, FileText, Hash, Scale } from 'lucide-react';
 import type { SearchResponse } from '@/types/search';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -102,7 +103,7 @@ export function SearchResults({ results }: SearchResultsProps) {
             {/* 본문 */}
             <div
               className="text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg"
-              dangerouslySetInnerHTML={{ __html: article.highlighted_content }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(article.highlighted_content, { ALLOWED_TAGS: ['mark', 'br'], ALLOWED_ATTR: ['style'] }) }}
             />
 
             {/* 참조 조항 */}

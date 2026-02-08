@@ -11,12 +11,20 @@ RETURNS TABLE (
   relevance_score FLOAT
 ) AS $$
 BEGIN
+  -- Validate input: reject empty or whitespace-only queries
+  IF LENGTH(TRIM(search_query)) = 0 THEN
+    RAISE EXCEPTION 'search_query cannot be empty';
+  END IF;
+
+  -- Sanitize LIKE wildcards in user input
+  search_query := REPLACE(REPLACE(search_query, '%', '\%'), '_', '\_');
+
   RETURN QUERY
   SELECT
     ld.id,
     ld.content,
     ld.metadata,
-    -- Score based on number of occurrences
+    -- Score based on number of occurrences (safe from division by zero)
     (LENGTH(ld.content) - LENGTH(REPLACE(ld.content, search_query, '')))::FLOAT / LENGTH(search_query)::FLOAT AS relevance_score
   FROM law_documents ld
   WHERE ld.content LIKE '%' || search_query || '%'

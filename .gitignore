@@ -61,3 +61,7 @@ htmlcov/
 # package-lock.json
 # pnpm-lock.yaml
 .vercel
+
+# Claude Code
+.claude/settings.local.json
+.ralph-active

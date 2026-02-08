@@ -1,16 +1,39 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
+const MAX_QUERY_LENGTH = 500;
+const MAX_RESULTS = 100;
+const MAX_KEYWORDS = 20;
+
+interface SupabaseSearchResult {
+  id: string;
+  content: string;
+  relevance_score: number;
+  metadata: {
+    law_name?: string;
+    article_number?: string;
+    title?: string;
+    article_type?: 'article' | 'appendix';
+  };
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export async function POST(request: Request) {
   try {
     const { query, top_k = 10 } = await request.json();
 
-    if (!query || typeof query !== 'string') {
+    if (!query || typeof query !== 'string' || !query.trim()) {
       return NextResponse.json(
-        { error: 'Invalid query parameter' },
+        { error: '검색어를 입력해주세요' },
         { status: 400 }
       );
     }
+
+    const sanitizedQuery = query.trim().slice(0, MAX_QUERY_LENGTH);
+    const validatedTopK = Math.min(Math.max(1, Number(top_k) || 10), MAX_RESULTS);
 
     // Initialize Supabase client
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -28,37 +51,43 @@ export async function POST(request: Request) {
 
     // Call Supabase RPC function for keyword search
     const { data, error } = await supabase.rpc('search_law_documents', {
-      search_query: query,
-      max_results: top_k
+      search_query: sanitizedQuery,
+      max_results: validatedTopK
     });
 
     if (error) {
       console.error('Supabase error:', error);
       return NextResponse.json(
-        { error: 'Search failed', details: error.message },
+        { error: 'Search failed' },
         { status: 500 }
       );
     }
 
     // Normalize relevance scores to 0-100 range
-    const maxScore = Math.max(...data.map((row: any) => row.relevance_score), 0.0001);
+    const maxScore = Math.max(...data.map((row: SupabaseSearchResult) => row.relevance_score), 0.0001);
+
+    // Parse and limit keywords (support both comma and space separation)
+    const keywords = sanitizedQuery
+      .split(/[\s,]+/)
+      .filter((k: string) => k.length > 0)
+      .slice(0, MAX_KEYWORDS);
+
+    // Build single regex for all keywords (escaped to prevent ReDoS)
+    const keywordRegex = keywords.length > 0
+      ? new RegExp(`(${keywords.map(escapeRegex).join('|')})`, 'gi')
+      : null;
 
     // Transform results to match frontend expectations
-    const articles = data.map((row: any) => {
-      // Debug: Log article_type
-      console.log('Article:', row.metadata.article_number, 'Type:', row.metadata.article_type);
-
-      // Highlight search keywords in content (support both comma and space separation)
-      const keywords = query.trim().split(/[\s,]+/).filter(k => k.length > 0);
+    const articles = data.map((row: SupabaseSearchResult) => {
       let highlightedContent = row.content;
 
-      keywords.forEach(keyword => {
-        const regex = new RegExp(`(${keyword})`, 'gi');
+      // Highlight search keywords in content (single pass with escaped regex)
+      if (keywordRegex) {
         highlightedContent = highlightedContent.replace(
-          regex,
+          keywordRegex,
           '<mark style="background-color: #fef08a; padding: 2px 4px; border-radius: 2px;">$1</mark>'
         );
-      });
+      }
 
       // Smart newline handling (same for all content types)
       // 1. Double newlines -> paragraph break
@@ -83,10 +112,10 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({
-      query,
+      query: sanitizedQuery,
       total_found: articles.length,
-      keywords: query.split(' ').filter((k: string) => k.length > 1),
-      relevant_laws: [...new Set(articles.map((a: any) => a.law_name))],
+      keywords,
+      relevant_laws: [...new Set(articles.map((a: { law_name: string }) => a.law_name))],
       articles,
       metadata: {
         search_time_ms: 0,

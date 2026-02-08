@@ -4,6 +4,7 @@
 API 문서: https://open.law.go.kr/LSO/openApi/guideList.do
 """
 
+import logging
 import os
 import requests
 import xml.etree.ElementTree as ET
@@ -11,10 +12,13 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class LawInfo:
     """법령 기본 정보"""
+
     law_id: str  # 법령일련번호
     law_name: str  # 법령명
     law_type: str  # 법령 구분 (법률/시행령/시행규칙)
@@ -41,10 +45,7 @@ class LawAPIClient:
             )
 
     def search_laws(
-        self,
-        keyword: str,
-        law_type: Optional[str] = None,
-        display: int = 100
+        self, keyword: str, law_type: Optional[str] = None, display: int = 100
     ) -> List[LawInfo]:
         """
         법령 검색
@@ -64,7 +65,7 @@ class LawAPIClient:
             "target": "law",
             "query": keyword,
             "numOfRows": min(display, 100),
-            "pageNo": 1
+            "pageNo": 1,
         }
 
         if law_type:
@@ -77,7 +78,7 @@ class LawAPIClient:
             return self._parse_search_results(response.text)
 
         except requests.RequestException as e:
-            print(f"법령 검색 실패: {e}")
+            logger.error(f"Law search failed for keyword '{keyword}': {e}")
             return []
 
     def get_law_detail(self, law_id: str) -> Optional[Dict]:
@@ -92,12 +93,7 @@ class LawAPIClient:
         """
         url = f"{self.BASE_URL}/lawService.do"
 
-        params = {
-            "OC": self.api_key,
-            "target": "law",
-            "MST": law_id,
-            "type": "XML"
-        }
+        params = {"OC": self.api_key, "target": "law", "MST": law_id, "type": "XML"}
 
         try:
             response = requests.get(url, params=params, timeout=30)
@@ -106,7 +102,7 @@ class LawAPIClient:
             return self._parse_law_detail(response.text)
 
         except requests.RequestException as e:
-            print(f"법령 상세 조회 실패 (ID: {law_id}): {e}")
+            logger.error(f"Law detail fetch failed (ID: {law_id}): {e}")
             return None
 
     def get_enforcement_rules(self, law_name: str) -> List[LawInfo]:
@@ -120,16 +116,10 @@ class LawAPIClient:
             시행령, 시행규칙 목록
         """
         # 시행령 검색
-        enforcement_decree = self.search_laws(
-            keyword=law_name,
-            law_type="대통령령"
-        )
+        enforcement_decree = self.search_laws(keyword=law_name, law_type="대통령령")
 
         # 시행규칙 검색
-        enforcement_rules = self.search_laws(
-            keyword=law_name,
-            law_type="부령"
-        )
+        enforcement_rules = self.search_laws(keyword=law_name, law_type="부령")
 
         return enforcement_decree + enforcement_rules
 
@@ -140,22 +130,34 @@ class LawAPIClient:
         try:
             root = ET.fromstring(xml_text)
 
-            for law_elem in root.findall('.//law'):
-                law_id = self._get_text(law_elem, '법령일련번호')
-                law_name = self._get_text(law_elem, '법령명한글')
-                law_type = self._get_text(law_elem, '법령구분명')
+            # Validate API response
+            if root.tag == "error" or root.find(".//error") is not None:
+                error_msg = self._get_text(root, "message") or "Unknown API error"
+                logger.error(f"Law API returned error: {error_msg}")
+                return []
+
+            for law_elem in root.findall(".//law"):
+                law_id = self._get_text(law_elem, "법령일련번호")
+                law_name = self._get_text(law_elem, "법령명한글")
+                law_type = self._get_text(law_elem, "법령구분명")
+
+                if not law_id or not law_name:
+                    logger.warning("Skipping incomplete law entry (missing ID or name)")
+                    continue
 
                 if law_id and law_name:
-                    laws.append(LawInfo(
-                        law_id=law_id,
-                        law_name=law_name,
-                        law_type=law_type or "미분류",
-                        promulgation_date=self._get_text(law_elem, '공포일자'),
-                        enforcement_date=self._get_text(law_elem, '시행일자')
-                    ))
+                    laws.append(
+                        LawInfo(
+                            law_id=law_id,
+                            law_name=law_name,
+                            law_type=law_type or "미분류",
+                            promulgation_date=self._get_text(law_elem, "공포일자"),
+                            enforcement_date=self._get_text(law_elem, "시행일자"),
+                        )
+                    )
 
         except ET.ParseError as e:
-            print(f"XML 파싱 오류: {e}")
+            logger.error(f"XML parse error: {e}")
 
         return laws
 
@@ -166,42 +168,42 @@ class LawAPIClient:
 
             # 기본 정보
             law_info = {
-                'law_id': self._get_text(root, '법령일련번호'),
-                'law_name': self._get_text(root, '법령명한글'),
-                'law_type': self._get_text(root, '법령구분명'),
-                'promulgation_date': self._get_text(root, '공포일자'),
-                'enforcement_date': self._get_text(root, '시행일자'),
-                'articles': []
+                "law_id": self._get_text(root, "법령일련번호"),
+                "law_name": self._get_text(root, "법령명한글"),
+                "law_type": self._get_text(root, "법령구분명"),
+                "promulgation_date": self._get_text(root, "공포일자"),
+                "enforcement_date": self._get_text(root, "시행일자"),
+                "articles": [],
             }
 
             # 조문 추출
-            for article in root.findall('.//조문'):
+            for article in root.findall(".//조문"):
                 article_info = {
-                    'article_number': self._get_text(article, '조문번호'),
-                    'title': self._get_text(article, '조문제목'),
-                    'content': self._get_text(article, '조문내용'),
-                    'paragraphs': []
+                    "article_number": self._get_text(article, "조문번호"),
+                    "title": self._get_text(article, "조문제목"),
+                    "content": self._get_text(article, "조문내용"),
+                    "paragraphs": [],
                 }
 
                 # 항 추출
-                for paragraph in article.findall('.//항'):
+                for paragraph in article.findall(".//항"):
                     paragraph_info = {
-                        'paragraph_number': self._get_text(paragraph, '항번호'),
-                        'content': self._get_text(paragraph, '항내용')
+                        "paragraph_number": self._get_text(paragraph, "항번호"),
+                        "content": self._get_text(paragraph, "항내용"),
                     }
-                    article_info['paragraphs'].append(paragraph_info)
+                    article_info["paragraphs"].append(paragraph_info)
 
-                law_info['articles'].append(article_info)
+                law_info["articles"].append(article_info)
 
             return law_info
 
         except ET.ParseError as e:
-            print(f"XML 파싱 오류: {e}")
+            logger.error(f"XML parse error: {e}")
             return None
 
     def _get_text(self, element: ET.Element, tag: str) -> Optional[str]:
         """XML 요소에서 텍스트 추출"""
-        elem = element.find(f'.//{tag}')
+        elem = element.find(f".//{tag}")
         return elem.text.strip() if elem is not None and elem.text else None
 
 
@@ -229,7 +231,7 @@ if __name__ == "__main__":
             print(f"조문 수: {len(detail.get('articles', []))}")
 
             # 첫 번째 조문 출력
-            if detail.get('articles'):
-                first_article = detail['articles'][0]
+            if detail.get("articles"):
+                first_article = detail["articles"][0]
                 print(f"\n{first_article['article_number']} {first_article['title']}")
-                print(first_article['content'][:200] + "...")
+                print(first_article["content"][:200] + "...")

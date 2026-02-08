@@ -2,10 +2,14 @@
 PDF 파일에서 법령 텍스트 추출 → RAG 저장
 """
 
+import logging
 import sys
 import os
 import re
 from pathlib import Path
+from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -18,28 +22,39 @@ except ImportError:
     print("설치: pip install PyPDF2")
     sys.exit(1)
 
+
 def extract_text_from_pdf(pdf_path: str) -> str:
     """PDF에서 텍스트 추출"""
-    text = ""
+    try:
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            print(f"   총 {len(pdf_reader.pages)}페이지")
 
-    with open(pdf_path, 'rb') as file:
-        pdf_reader = PyPDF2.PdfReader(file)
-        print(f"   총 {len(pdf_reader.pages)}페이지")
+            text_parts = []
+            for page_num, page in enumerate(pdf_reader.pages, 1):
+                page_text = page.extract_text()
+                text_parts.append(page_text)
 
-        for page_num, page in enumerate(pdf_reader.pages, 1):
-            page_text = page.extract_text()
-            text += page_text + "\n"
+                if page_num % 10 == 0:
+                    print(f"   진행: {page_num}/{len(pdf_reader.pages)} 페이지")
 
-            if page_num % 10 == 0:
-                print(f"   진행: {page_num}/{len(pdf_reader.pages)} 페이지")
+            return "\n".join(text_parts)
+    except FileNotFoundError:
+        logger.error(f"File not found: {pdf_path}")
+        return ""
+    except PyPDF2.errors.PdfReadError as e:
+        logger.error(f"Failed to read PDF {pdf_path}: {e}")
+        return ""
+    except Exception as e:
+        logger.error(f"Unexpected error reading {pdf_path}: {e}")
+        return ""
 
-    return text
 
-def parse_law_text(text: str, law_name: str, law_id: str) -> list:
+def parse_law_text(text: str, law_name: str, law_id: str) -> List[Dict[str, Any]]:
     """법령 텍스트를 조문 단위로 파싱"""
 
     # 조문 패턴: 제1조, 제2조 등
-    article_pattern = re.compile(r'제(\d+)조\s*\(([^)]+)\)')
+    article_pattern = re.compile(r"제(\d+)조\s*\(([^)]+)\)")
 
     articles = []
     seen_articles = set()  # 중복 제거용
@@ -66,15 +81,18 @@ def parse_law_text(text: str, law_name: str, law_id: str) -> list:
 
         # 너무 짧은 내용 제외
         if len(content) > 10:
-            articles.append({
-                'law_id': law_id,
-                'law_name': law_name,
-                'article_number': article_number,
-                'title': title,
-                'content': content[:2000]  # 최대 2000자
-            })
+            articles.append(
+                {
+                    "law_id": law_id,
+                    "law_name": law_name,
+                    "article_number": article_number,
+                    "title": title,
+                    "content": content[:2000],  # 최대 2000자
+                }
+            )
 
     return articles
+
 
 def main():
     """메인 함수"""
@@ -87,25 +105,27 @@ def main():
             "path": pdf_dir / "고압가스 안전관리법(법률)(제21065호)(20260102).pdf",
             "law_name": "고압가스 안전관리법",
             "law_id": "276461",
-            "law_type": "법률"
+            "law_type": "법률",
         },
         {
-            "path": pdf_dir / "고압가스 안전관리법 시행령(대통령령)(제35803호)(20251001).pdf",
+            "path": pdf_dir
+            / "고압가스 안전관리법 시행령(대통령령)(제35803호)(20251001).pdf",
             "law_name": "고압가스 안전관리법 시행령",
             "law_id": "278293",
-            "law_type": "시행령"
+            "law_type": "시행령",
         },
         {
-            "path": pdf_dir / "고압가스 안전관리법 시행규칙(산업통상부령)(제00001호)(20251001).pdf",
+            "path": pdf_dir
+            / "고압가스 안전관리법 시행규칙(산업통상부령)(제00001호)(20251001).pdf",
             "law_name": "고압가스 안전관리법 시행규칙",
             "law_id": "278693",
-            "law_type": "시행규칙"
-        }
+            "law_type": "시행규칙",
+        },
     ]
 
-    print("="*60)
+    print("=" * 60)
     print("PDF → RAG 저장")
-    print("="*60)
+    print("=" * 60)
 
     all_chunks = []
 
@@ -134,11 +154,11 @@ def main():
 
         for article in articles:
             chunks = chunker.chunk_article(
-                law_id=article['law_id'],
-                law_name=article['law_name'],
-                article_number=article['article_number'],
-                title=article['title'],
-                content=article['content']
+                law_id=article["law_id"],
+                law_name=article["law_name"],
+                article_number=article["article_number"],
+                title=article["title"],
+                content=article["content"],
             )
             all_chunks.extend(chunks)
 
@@ -150,10 +170,7 @@ def main():
     print(f"{'='*60}")
 
     embedder = KoreanEmbedder()
-    vector_store = VectorStore(
-        collection_name="hydrogen_law",
-        embedder=embedder
-    )
+    vector_store = VectorStore(collection_name="hydrogen_law", embedder=embedder)
 
     # 기존 데이터 삭제
     vector_store.reset()
@@ -178,10 +195,13 @@ def main():
     results = vector_store.search(test_query, top_k=3)
 
     for i, result in enumerate(results, 1):
-        print(f"\n{i}. {result['metadata']['law_name']} {result['metadata']['article_number']}")
+        print(
+            f"\n{i}. {result['metadata']['law_name']} {result['metadata']['article_number']}"
+        )
         print(f"   제목: {result['metadata']['title']}")
         print(f"   유사도: {result['similarity_score']:.3f}")
         print(f"   내용: {result['content'][:100]}...")
+
 
 if __name__ == "__main__":
     main()

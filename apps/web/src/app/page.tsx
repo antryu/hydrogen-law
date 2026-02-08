@@ -18,7 +18,10 @@ export default function HomePage() {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    if (!query.trim()) {
+      setError('검색어를 입력해주세요.');
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -72,7 +75,7 @@ export default function HomePage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  handleSearch(e as any);
+                  handleSearch(e as unknown as React.FormEvent);
                 }
               }}
               placeholder="예: 수소충전소, 안전기준 (콤마 또는 공백으로 키워드 구분)"

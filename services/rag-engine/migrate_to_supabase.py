@@ -7,12 +7,13 @@ from supabase import create_client, Client
 from src.embeddings import VectorStore
 
 # Supabase 설정
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://ygohwygdwbckgtotlogm.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # 환경 변수에서 가져오기
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-if not SUPABASE_KEY:
-    print("❌ SUPABASE_KEY 환경 변수가 설정되지 않았습니다.")
-    print("Supabase Dashboard → Settings → API → anon/public key 복사")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ SUPABASE_URL 또는 SUPABASE_KEY 환경 변수가 설정되지 않았습니다.")
+    print("Supabase Dashboard → Settings → API → URL 및 anon/public key 복사")
+    print("export SUPABASE_URL='https://your-project.supabase.co'")
     print("export SUPABASE_KEY='your-key-here'")
     exit(1)
 
@@ -27,8 +28,7 @@ print(f"총 문서: {stats['total_documents']}개")
 
 # 모든 문서 가져오기
 result = vector_store.collection.get(
-    limit=stats['total_documents'],
-    include=['documents', 'metadatas', 'embeddings']
+    limit=stats["total_documents"], include=["documents", "metadatas", "embeddings"]
 )
 
 print(f"\n🔄 Supabase로 마이그레이션 시작...")
@@ -38,23 +38,27 @@ migrated = 0
 failed = 0
 
 for i, (doc_id, doc, metadata, embedding) in enumerate(
-    zip(result['ids'], result['documents'], result['metadatas'], result['embeddings']),
-    1
+    zip(result["ids"], result["documents"], result["metadatas"], result["embeddings"]),
+    1,
 ):
     try:
         # Supabase에 삽입 (embedding을 리스트로 변환)
         data = {
-            "id": metadata.get('chunk_id', doc_id),
+            "id": metadata.get("chunk_id", doc_id),
             "content": doc,
-            "embedding": embedding.tolist() if hasattr(embedding, 'tolist') else embedding,
-            "metadata": metadata
+            "embedding": (
+                embedding.tolist() if hasattr(embedding, "tolist") else embedding
+            ),
+            "metadata": metadata,
         }
 
         supabase.table("law_documents").upsert(data).execute()
         migrated += 1
 
         if i % 10 == 0:
-            print(f"진행: {i}/{stats['total_documents']} ({migrated} 성공, {failed} 실패)")
+            print(
+                f"진행: {i}/{stats['total_documents']} ({migrated} 성공, {failed} 실패)"
+            )
 
     except Exception as e:
         failed += 1
