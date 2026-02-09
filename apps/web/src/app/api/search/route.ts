@@ -147,44 +147,53 @@ export async function POST(request: Request) {
       : null;
 
     // Transform results to match frontend expectations
-    const articles = data.map((row: SupabaseSearchResult) => {
-      let highlightedContent = row.content;
+    const articles = data
+      .map((row: SupabaseSearchResult) => {
+        try {
+          const content = row.content || '';
+          const metadata = row.metadata || {};
+          let highlightedContent = content;
 
-      // Highlight search keywords in content (single pass with escaped regex)
-      if (keywordRegex) {
-        highlightedContent = highlightedContent.replace(
-          keywordRegex,
-          '<mark style="background-color: #fef08a; padding: 2px 4px; border-radius: 2px;">$1</mark>'
-        );
-      }
+          // Highlight search keywords in content (single pass with escaped regex)
+          if (keywordRegex) {
+            highlightedContent = highlightedContent.replace(
+              keywordRegex,
+              '<mark style="background-color: #fef08a; padding: 2px 4px; border-radius: 2px;">$1</mark>'
+            );
+          }
 
-      // Smart newline handling (same for all content types)
-      // 1. Double newlines -> paragraph break
-      highlightedContent = highlightedContent.replace(/\n\n+/g, '<br><br>');
-      // 2. Single newlines -> space (allow text to flow naturally)
-      highlightedContent = highlightedContent.replace(/\n/g, ' ');
+          // Smart newline handling (same for all content types)
+          // 1. Double newlines -> paragraph break
+          highlightedContent = highlightedContent.replace(/\n\n+/g, '<br><br>');
+          // 2. Single newlines -> space (allow text to flow naturally)
+          highlightedContent = highlightedContent.replace(/\n/g, ' ');
 
-      // Normalize score: highest result = 100%, others scaled proportionally
-      const normalizedScore = (row.relevance_score / maxScore) * 100;
+          // Normalize score: highest result = 100%, others scaled proportionally
+          const score = typeof row.relevance_score === 'number' ? row.relevance_score : 0;
+          const normalizedScore = (score / maxScore) * 100;
 
-      return {
-        article_id: row.id,
-        law_name: row.metadata.law_name || '(법령명 없음)',
-        article_number: row.metadata.article_number || row.id.split('_')[1],
-        title: row.metadata.title || '',
-        content: row.content,
-        highlighted_content: highlightedContent,
-        relevance_score: normalizedScore,
-        article_type: row.metadata.article_type || 'article',
-        related_articles: []
-      };
-    });
+          return {
+            article_id: row.id,
+            law_name: metadata.law_name || '(법령명 없음)',
+            article_number: metadata.article_number || row.id.split('_')[1] || '',
+            title: metadata.title || '',
+            content,
+            highlighted_content: highlightedContent,
+            relevance_score: normalizedScore,
+            article_type: metadata.article_type || 'article',
+            related_articles: []
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((a): a is NonNullable<typeof a> => a !== null);
 
     return NextResponse.json({
       query: sanitizedQuery,
       total_found: articles.length,
       keywords,
-      relevant_laws: [...new Set(articles.map((a: { law_name: string }) => a.law_name))],
+      relevant_laws: [...new Set(articles.map(a => a.law_name))],
       articles,
       metadata: {
         search_time_ms: 0,
