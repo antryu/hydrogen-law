@@ -20,6 +20,8 @@ import uvicorn
 
 logger = logging.getLogger(__name__)
 
+import chromadb
+
 from src.embeddings import KoreanEmbedder, LawChunker, LawChunk, VectorStore
 from src.retrieval import HybridRetriever
 
@@ -100,6 +102,31 @@ class ComplianceResponse(BaseModel):
     metadata: Dict[str, Any]
 
 
+def _load_documents_from_chroma(collection, batch_size: int = 500):
+    """ChromaDB 컬렉션에서 문서를 배치로 읽어옵니다."""
+    total_docs = collection.count()
+    documents = []
+    offset = 0
+    while offset < total_docs:
+        result = collection.get(
+            limit=batch_size,
+            offset=offset,
+            include=["documents", "metadatas"],
+        )
+        if not result["documents"]:
+            break
+        for doc, meta in zip(result["documents"], result["metadatas"]):
+            documents.append(
+                {
+                    "id": meta.get("chunk_id", ""),
+                    "content": doc,
+                    "metadata": meta,
+                }
+            )
+        offset += batch_size
+    return documents, total_docs
+
+
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 검색 엔진 초기화"""
@@ -109,48 +136,72 @@ async def startup_event():
     print("수소법률 RAG 엔진 시작")
     print("=" * 60)
 
-    # 임베딩 모델 로드
+    # 1. 임베딩 모델 로드 시도
     print("\n1️⃣ 임베딩 모델 로드 중...")
-    embedder = KoreanEmbedder()
+    try:
+        embedder = KoreanEmbedder()
+        print("✅ 임베딩 모델 로드 완료")
+    except Exception as e:
+        embedder = None
+        print(f"⚠️ 임베딩 모델 로드 실패 (BM25 전용 모드로 전환): {e}")
 
-    # 벡터 DB 로드
-    print("2️⃣ 벡터 DB 로드 중...")
-    vector_store = VectorStore(collection_name="hydrogen_law", embedder=embedder)
-
-    # BM25 인덱스 구축
-    print("3️⃣ 하이브리드 검색 엔진 초기화 중...")
-    retriever = HybridRetriever(vector_store)
-
-    stats = vector_store.get_stats()
-    total_docs = stats["total_documents"]
+    # 2. 문서 로드 (ChromaDB 또는 JSON 파일)
+    print("2️⃣ 문서 로드 중...")
     documents = []
+    total_docs = 0
+    base_dir = os.path.dirname(__file__)
+    chroma_dir = os.path.join(base_dir, "chroma_db")
 
-    # Batch loading to prevent OOM with large datasets
-    batch_size = 500
-    offset = 0
-    while offset < total_docs:
-        result = vector_store.collection.get(
-            limit=batch_size,
-            offset=offset,
-            include=["documents", "metadatas"],
-        )
-        if not result["documents"]:
-            break
-        for doc, metadata in zip(result["documents"], result["metadatas"]):
-            documents.append(
-                {
-                    "id": metadata.get("chunk_id", ""),
-                    "content": doc,
-                    "metadata": metadata,
-                }
+    if embedder is not None:
+        vector_store = VectorStore(collection_name="hydrogen_law", embedder=embedder)
+        documents, total_docs = _load_documents_from_chroma(vector_store.collection)
+    else:
+        # BM25 전용 모드: ChromaDB에서 로드 시도
+        try:
+            chroma_client = chromadb.PersistentClient(
+                path=chroma_dir,
+                settings=chromadb.Settings(anonymized_telemetry=False, allow_reset=True),
             )
-        offset += batch_size
+            collection = chroma_client.get_or_create_collection(
+                name="hydrogen_law",
+                metadata={"description": "수소 관련 법령 벡터 데이터베이스"},
+            )
+            documents, total_docs = _load_documents_from_chroma(collection)
+        except Exception as e:
+            print(f"  ChromaDB 로드 실패: {e}")
+
+    # ChromaDB가 비어있으면 JSON 파일에서 로드
+    if not documents:
+        import json as json_mod
+        json_path = os.path.join(base_dir, "law_documents.json")
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                documents = json_mod.load(f)
+            total_docs = len(documents)
+            print(f"  ✅ JSON 파일에서 {total_docs}개 문서 로드")
+        else:
+            print("  ⚠️ 문서 데이터를 찾을 수 없습니다")
+
+    # 3. 검색 엔진 초기화
+    print("3️⃣ 검색 엔진 초기화 중...")
+    if vector_store is not None:
+        retriever = HybridRetriever(vector_store)
+    else:
+        # BM25 전용 모드에서는 dummy vector_store 없이 retriever 직접 초기화
+        retriever = HybridRetriever.__new__(HybridRetriever)
+        retriever.vector_store = None
+        retriever.vector_weight = 0.0
+        retriever.bm25_weight = 1.0
+        retriever.bm25_index = None
+        retriever.documents = []
+        retriever.document_ids = []
 
     retriever.build_bm25_index(documents)
 
     print(f"\n✅ 초기화 완료!")
-    print(f"   문서 수: {stats['total_documents']}개")
-    print(f"   임베딩 차원: {stats['embedding_dimension']}")
+    print(f"   문서 수: {total_docs}개")
+    mode = "하이브리드 (벡터 + BM25)" if embedder else "BM25 전용"
+    print(f"   검색 모드: {mode}")
     print("=" * 60)
 
 
