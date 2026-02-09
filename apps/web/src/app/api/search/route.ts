@@ -123,11 +123,7 @@ async function searchViaSupabase(
     });
 
     if (error) {
-      console.error('Supabase error:', error);
-      return NextResponse.json(
-        { error: '검색 중 오류가 발생했습니다' },
-        { status: 500 }
-      );
+      throw new Error(`Supabase RPC error: ${error.message}`);
     }
 
     data = result;
@@ -143,11 +139,7 @@ async function searchViaSupabase(
 
     const firstError = searchResults.find(r => r.error);
     if (firstError?.error) {
-      console.error('Supabase error:', firstError.error);
-      return NextResponse.json(
-        { error: '검색 중 오류가 발생했습니다' },
-        { status: 500 }
-      );
+      throw new Error(`Supabase RPC error: ${firstError.error.message}`);
     }
 
     const mergedMap = new Map<string, SupabaseSearchResult & { matchCount: number }>();
@@ -358,18 +350,24 @@ export async function POST(request: Request) {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+    // 1. Try Supabase
     if (supabaseUrl && supabaseKey) {
-      return await searchViaSupabase(sanitizedQuery, validatedTopK, supabaseUrl, supabaseKey);
+      try {
+        return await searchViaSupabase(sanitizedQuery, validatedTopK, supabaseUrl, supabaseKey);
+      } catch (e) {
+        console.error('Supabase search failed, falling back:', e);
+      }
     }
 
-    // Fallback to RAG engine when Supabase is not configured
+    // 2. Try RAG engine
     try {
       return await searchViaRagEngine(sanitizedQuery, validatedTopK);
     } catch {
-      // RAG engine unreachable (e.g. Vercel deployment) — use local search
       console.log('RAG engine unreachable, falling back to local search');
-      return await searchLocal(sanitizedQuery, validatedTopK);
     }
+
+    // 3. Local search (always available)
+    return await searchLocal(sanitizedQuery, validatedTopK);
 
   } catch (error) {
     console.error('API error:', error);
