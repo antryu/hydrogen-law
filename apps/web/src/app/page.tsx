@@ -115,8 +115,6 @@ export default function HomePage() {
             </Badge>
             <Separator orientation="vertical" className="h-4 sm:h-5 hidden sm:block" />
             <span className="font-medium text-muted-foreground">1초 이내</span>
-            <Separator orientation="vertical" className="h-4 sm:h-5 hidden sm:block" />
-            <span className="font-medium text-muted-foreground">100% 정확</span>
           </div>
 
           {error && (
