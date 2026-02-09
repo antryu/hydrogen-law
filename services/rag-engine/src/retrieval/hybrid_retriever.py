@@ -55,6 +55,11 @@ class HybridRetriever:
         self.documents = documents
         self.document_ids = [doc['id'] for doc in documents]
 
+        if not documents:
+            print("⚠️ 문서가 없어 BM25 인덱스를 생성하지 않습니다")
+            self.bm25_index = None
+            return
+
         # 토큰화
         tokenized_corpus = [
             self._tokenize(doc['content'])
@@ -88,12 +93,14 @@ class HybridRetriever:
         # 1. 쿼리 전처리
         processed_query = self._preprocess_query(query)
 
-        # 2. 벡터 검색
-        vector_results = self.vector_store.search(
-            query=processed_query['original'],
-            top_k=top_k * 2,  # 더 많이 가져와서 융합
-            filters=filters
-        )
+        # 2. 벡터 검색 (vector_store가 있을 때만)
+        vector_results = []
+        if self.vector_store is not None:
+            vector_results = self.vector_store.search(
+                query=processed_query['original'],
+                top_k=top_k * 2,  # 더 많이 가져와서 융합
+                filters=filters
+            )
 
         # 3. BM25 검색
         bm25_results = self._bm25_search(
@@ -151,15 +158,71 @@ class HybridRetriever:
             'article_refs': article_refs
         }
 
+    # 한국어 조사/어미 패턴 (토큰 끝에서 제거)
+    _KO_SUFFIXES = re.compile(
+        r'(은|는|이|가|을|를|에|의|로|와|과|도|만|부터|까지|에서|으로|하여|하고|하는|하면|한다|된다|이다|한|된|할|함|등|및)$'
+    )
+
     def _tokenize(self, text: str) -> List[str]:
-        """한국어 토큰화 (간단한 공백 기반)"""
-        # 간단한 토큰화 (실제로는 Mecab 등 사용 가능)
-        return text.split()
+        """한국어 토큰화 (공백 기반 + 조사 제거)"""
+        tokens = text.split()
+        result = []
+        for token in tokens:
+            # 원본 토큰 추가
+            result.append(token)
+            # 조사/어미 제거한 어간 추가
+            stem = self._KO_SUFFIXES.sub('', token)
+            if stem and stem != token:
+                result.append(stem)
+        return result
+
+    @staticmethod
+    def _split_korean_compound(word: str) -> List[str]:
+        """한국어 복합어를 2글자 서브스트링으로 분리"""
+        parts = [word]
+        if len(word) >= 4:
+            # 2글자씩 슬라이딩 윈도우
+            for i in range(len(word) - 1):
+                sub = word[i:i+2]
+                if sub != word:
+                    parts.append(sub)
+        return parts
+
+    def _substring_search(self, query: str, top_k: int) -> List[Dict]:
+        """단순 부분문자열 검색 (BM25 보완용)"""
+        results = []
+        # 원본 키워드 + 복합어 분리 키워드
+        raw_keywords = query.split()
+        keywords = []
+        for kw in raw_keywords:
+            keywords.extend(self._split_korean_compound(kw))
+        # 중복 제거, 길이 1 이하 제외
+        keywords = list(dict.fromkeys(kw for kw in keywords if len(kw) >= 2))
+
+        for doc in self.documents:
+            content = doc['content']
+            match_count = sum(1 for kw in keywords if kw in content)
+            if match_count > 0:
+                # 원본 키워드 매칭에 가중치 부여
+                score = 0
+                for kw in keywords:
+                    cnt = content.count(kw)
+                    if cnt > 0:
+                        weight = 3.0 if kw in raw_keywords else 1.0
+                        score += cnt * weight
+                results.append({
+                    'id': doc['id'],
+                    'content': content,
+                    'metadata': doc.get('metadata', {}),
+                    'bm25_score': float(score),
+                })
+        results.sort(key=lambda x: x['bm25_score'], reverse=True)
+        return results[:top_k]
 
     def _bm25_search(self, query: str, top_k: int) -> List[Dict]:
-        """BM25 검색"""
+        """BM25 검색 (결과 없으면 부분문자열 검색으로 폴백)"""
         if not self.bm25_index:
-            return []
+            return self._substring_search(query, top_k)
 
         # 쿼리 토큰화
         tokenized_query = self._tokenize(query)
@@ -180,6 +243,17 @@ class HybridRetriever:
                     'metadata': self.documents[idx].get('metadata', {}),
                     'bm25_score': float(scores[idx])
                 })
+
+        # BM25 결과가 부족하면 부분문자열 검색으로 보완
+        if len(results) < top_k:
+            substr_results = self._substring_search(query, top_k)
+            existing_ids = {r['id'] for r in results}
+            for sr in substr_results:
+                if sr['id'] not in existing_ids:
+                    results.append(sr)
+                    existing_ids.add(sr['id'])
+                if len(results) >= top_k:
+                    break
 
         return results
 

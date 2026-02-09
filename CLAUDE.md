@@ -14,7 +14,7 @@ Hydrogen Law RAG System (수소법률 RAG 시스템) - A RAG-based legal search 
 - **Vector DB**: ChromaDB (dev) / Pinecone (production)
 - **Database**: PostgreSQL via Supabase (@supabase/supabase-js)
 - **Embeddings**: jhgan/ko-sroberta-multitask (Korean-optimized, 768 dimensions)
-- **Search**: Hybrid retrieval (vector 0.7 + BM25 0.3)
+- **Search**: Hybrid retrieval (vector 0.7 + BM25 0.3), BM25-only fallback when offline
 - **LLM**: Claude 3.5 Sonnet (optional, for AI summaries only)
 
 ## Directory Structure
@@ -38,8 +38,9 @@ hydrogen-law-rag/
 │       │   └── retrieval/    # Hybrid retriever (vector + BM25)
 │       ├── main.py           # FastAPI entrypoint
 │       ├── load_pdfs_to_rag.py  # PDF ingestion pipeline
+│       ├── law_documents.json   # Pre-parsed law documents (BM25 fallback data)
 │       ├── law_config.yaml   # Law collection configuration
-│       └── chroma_db/        # Local ChromaDB data
+│       └── chroma_db/        # Local ChromaDB data (HNSW only; sqlite not in git)
 ├── packages/
 │   ├── shared-types/         # Shared TypeScript types (@hydrogen-law/shared-types)
 │   └── ui-components/        # (Placeholder) Shared UI components
@@ -61,10 +62,24 @@ npm run type-check   # TypeScript type checking
 ```bash
 cd services/rag-engine
 pip install -r requirements.txt         # Install dependencies
-uvicorn main:app --reload               # Start FastAPI dev server (port 8000)
+
+# Start dev server (BM25-only mode when HuggingFace is unreachable)
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uvicorn main:app --reload --port 8000
+
 python load_pdfs_to_rag.py              # Ingest PDF law documents into ChromaDB
 pytest                                  # Run tests
 black .                                 # Format Python code
+```
+
+### Local Development (start both services)
+```bash
+# 1. Start RAG engine first (port 8000) — required when Supabase env vars are not set
+cd services/rag-engine
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uvicorn main:app --reload --port 8000
+
+# 2. Then start frontend (port 3000)
+cd apps/web
+npm run dev
 ```
 
 ### Shared Types (packages/shared-types/)
@@ -79,12 +94,15 @@ Reference: `services/rag-engine/.env.example`
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LAW_API_KEY` | Yes | 국가법령정보센터 API key (data.go.kr) |
-| `DATABASE_URL` | Yes | PostgreSQL connection string (Supabase) |
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL (frontend) |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key (frontend) |
+| `LAW_API_KEY` | No | 국가법령정보센터 API key (data.go.kr) |
+| `DATABASE_URL` | No | PostgreSQL connection string (Supabase) |
+| `NEXT_PUBLIC_SUPABASE_URL` | No | Supabase project URL (frontend); if unset, falls back to RAG engine |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No | Supabase anon key (frontend); if unset, falls back to RAG engine |
+| `SUPABASE_SERVICE_ROLE_KEY` | No | Supabase service role key (API route server-side) |
 | `PINECONE_API_KEY` | No | Pinecone API key (production only) |
 | `ANTHROPIC_API_KEY` | No | Claude API key (optional AI features) |
+
+**Note**: No env vars are strictly required for local dev. Without Supabase vars, the frontend API route falls back to the RAG engine at `localhost:8000`.
 
 ## Conventions
 
@@ -103,7 +121,7 @@ Reference: `services/rag-engine/.env.example`
 - `POST /ai-summary` - Optional LLM summary (WIP)
 
 ### Frontend API Routes (Next.js)
-- `POST /api/search` - Search proxy to Supabase
+- `POST /api/search` - Search endpoint (Supabase → RAG engine fallback)
 
 ## Testing
 
@@ -118,6 +136,33 @@ cd apps/web
 npm run lint && npm run build           # Lint + build check
 ```
 
+## Search Fallback Architecture
+
+The search system has a multi-layer fallback chain to ensure results are always returned:
+
+1. **Frontend API route** (`/api/search`): Tries Supabase first. If `NEXT_PUBLIC_SUPABASE_URL` is not set, falls back to RAG engine at `localhost:8000`.
+2. **RAG engine** (`main.py`): Tries to load ChromaDB + embedding model for hybrid search. If embedding model is unavailable (e.g. HuggingFace blocked), falls back to BM25-only mode.
+3. **Document loading**: Tries ChromaDB first. If ChromaDB is empty (0 documents), loads pre-parsed documents from `law_documents.json`.
+4. **BM25 search**: If BM25 returns insufficient results, falls back to substring search with Korean compound word splitting.
+
+## Korean Search Considerations
+
+- BM25 tokenizes on spaces, which is inadequate for Korean agglutinative morphology
+- Korean particles (은/는/이/가/을/를 etc.) are stripped during tokenization to improve matching
+- Compound words like "안전기준" are split into 2-char sliding window substrings for substring search
+- Always test searches with Korean compound words after making search changes
+
+## Known Issues & Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `unexpected token...is not valid JSON` | API route returns non-JSON (e.g. HTML error page) | Frontend reads response as text first, then `JSON.parse` with error handling |
+| ChromaDB has 0 documents after clone | `chroma.sqlite3` was never committed to git (only HNSW index files) | RAG engine falls back to `law_documents.json` |
+| Embedding model fails to load | HuggingFace may be blocked by proxy/firewall | Set `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1`; engine falls back to BM25-only |
+| Search returns 0 results for Korean compound words | BM25 space-based tokenization misses compounds | Substring search fallback with compound word splitting handles this |
+| Supabase rows with null metadata | Some DB rows have null metadata/content fields | API route uses null guards (`row.metadata \|\| {}`) and per-row try-catch |
+| Port 8000/3000 already in use | Previous dev server not stopped | Kill existing process before restarting |
+
 ## Law PDFs
 
-The project includes Korean law PDFs (고압가스 안전관리법 and related regulations) at the project root. These are ingested via `load_pdfs_to_rag.py` into ChromaDB for vector search.
+The project includes Korean law PDFs (고압가스 안전관리법 and related regulations) at the project root. These are ingested via `load_pdfs_to_rag.py` into ChromaDB for vector search. Pre-parsed versions are stored in `law_documents.json` as a fallback when ChromaDB is empty.

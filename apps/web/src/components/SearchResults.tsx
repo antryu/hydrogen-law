@@ -1,12 +1,104 @@
+'use client';
+
+import { useState } from 'react';
 import DOMPurify from 'dompurify';
-import { Clock, FileText, Hash, Scale } from 'lucide-react';
+import { Clock, FileText, Hash, Scale, ChevronDown, ChevronUp } from 'lucide-react';
 import type { SearchResponse } from '@/types/search';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
+
+const CONTENT_PREVIEW_LENGTH = 300;
 
 interface SearchResultsProps {
   results: SearchResponse;
+}
+
+function ArticleCard({ article, index }: { article: SearchResponse['articles'][number]; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const sanitized = DOMPurify.sanitize(article.highlighted_content, { ALLOWED_TAGS: ['mark', 'br'], ALLOWED_ATTR: ['style'] });
+  const isLong = article.content.length > CONTENT_PREVIEW_LENGTH;
+
+  return (
+    <Card className="border-2 hover:border-primary/50 transition-all hover:shadow-lg">
+      <CardHeader>
+        <div className="flex items-start gap-4 flex-1">
+          <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-primary text-primary-foreground rounded-full font-bold text-lg">
+            {index + 1}
+          </div>
+          <div className="space-y-1 flex-1">
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-xl leading-tight">
+                {article.law_name} {article.article_number}
+              </CardTitle>
+              {article.article_type === 'appendix' && (
+                <Badge variant="secondary" className="text-xs">
+                  별표
+                </Badge>
+              )}
+            </div>
+            <CardDescription className="text-base">
+              {article.title}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="relative">
+          <div
+            className={`text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg ${!expanded && isLong ? 'max-h-40 overflow-hidden' : ''}`}
+            dangerouslySetInnerHTML={{ __html: expanded || !isLong ? sanitized : sanitized }}
+          />
+          {!expanded && isLong && (
+            <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background to-transparent rounded-b-lg" />
+          )}
+        </div>
+        {isLong && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? (
+              <>
+                <ChevronUp className="w-4 h-4 mr-1" />
+                접기
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-4 h-4 mr-1" />
+                상세보기
+              </>
+            )}
+          </Button>
+        )}
+
+        {article.related_articles && article.related_articles.length > 0 && (
+          <div className="space-y-2">
+            <Separator />
+            <div>
+              <p className="text-sm font-semibold text-muted-foreground mb-2">
+                관련 조항
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {article.related_articles.map((ref) => (
+                  <Badge
+                    key={ref.id}
+                    variant="secondary"
+                    className="cursor-pointer hover:bg-secondary/80"
+                  >
+                    {ref.article_number}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 export function SearchResults({ results }: SearchResultsProps) {
@@ -68,68 +160,11 @@ export function SearchResults({ results }: SearchResultsProps) {
 
       {/* 조항 목록 */}
       {results.articles.map((article, i) => (
-        <Card
+        <ArticleCard
           key={`${article.law_name}-${article.article_number}-${i}`}
-          className="border-2 hover:border-primary/50 transition-all hover:shadow-lg"
-        >
-          <CardHeader>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-4 flex-1">
-                <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center bg-primary text-primary-foreground rounded-full font-bold text-lg">
-                  {i + 1}
-                </div>
-                <div className="space-y-1 flex-1">
-                  <div className="flex items-center gap-2">
-                    <CardTitle className="text-xl leading-tight">
-                      {article.law_name} {article.article_number}
-                    </CardTitle>
-                    {article.article_type === 'appendix' && (
-                      <Badge variant="secondary" className="text-xs">
-                        별표
-                      </Badge>
-                    )}
-                  </div>
-                  <CardDescription className="text-base">
-                    {article.title}
-                  </CardDescription>
-                </div>
-              </div>
-              <Badge variant="default" className="text-sm font-semibold px-3 py-1">
-                {Math.min(100, Math.round(article.relevance_score))}%
-              </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* 본문 */}
-            <div
-              className="text-sm leading-relaxed text-muted-foreground bg-muted/30 p-4 rounded-lg"
-              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(article.highlighted_content, { ALLOWED_TAGS: ['mark', 'br'], ALLOWED_ATTR: ['style'] }) }}
-            />
-
-            {/* 참조 조항 */}
-            {article.related_articles && article.related_articles.length > 0 && (
-              <div className="space-y-2">
-                <Separator />
-                <div>
-                  <p className="text-sm font-semibold text-muted-foreground mb-2">
-                    관련 조항
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {article.related_articles.map((ref) => (
-                      <Badge
-                        key={ref.id}
-                        variant="secondary"
-                        className="cursor-pointer hover:bg-secondary/80"
-                      >
-                        {ref.article_number}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          article={article}
+          index={i}
+        />
       ))}
     </div>
   );

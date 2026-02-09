@@ -33,17 +33,24 @@ export default function HomePage() {
         body: JSON.stringify({ query: query.trim(), top_k: 100 }),
       });
 
-      if (!response.ok) {
-        throw new Error('검색 실패');
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('서버 응답을 처리할 수 없습니다. 잠시 후 다시 시도해주세요.');
       }
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || '검색 중 오류가 발생했습니다.');
+      }
+
       setResults(data);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : '서버 연결 실패. 백엔드 서버가 실행 중인지 확인하세요.'
+          : '검색 서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.'
       );
     } finally {
       setLoading(false);

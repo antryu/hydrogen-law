@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import './globals.css';
 import { ThemeProvider } from '@/components/theme-provider';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -26,14 +27,14 @@ export default function RootLayout({
           <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '0 1.5rem' }}>
               <div className="flex h-16 items-center justify-between">
-                <div className="flex items-center gap-2 font-bold text-xl">
+                <Link href="/" className="flex items-center gap-2 font-bold text-xl hover:opacity-80 transition-opacity">
                   <span className="text-2xl">⚡</span>
                   <span>수소법률 지능형 검색</span>
-                </div>
+                </Link>
                 <div className="flex items-center gap-4">
-                  <p className="text-sm text-muted-foreground hidden md:block">
-                    AI 기반 법령 검색 시스템
-                  </p>
+                  <Link href="/upload" className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:block">
+                    법령 업로드
+                  </Link>
                   <ThemeToggle />
                 </div>
               </div>
