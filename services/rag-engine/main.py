@@ -8,8 +8,11 @@ LLM 최소화 접근법:
 
 import logging
 import os
+import re
+import tempfile
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Dict, Any
@@ -17,7 +20,7 @@ import uvicorn
 
 logger = logging.getLogger(__name__)
 
-from src.embeddings import KoreanEmbedder, VectorStore
+from src.embeddings import KoreanEmbedder, LawChunker, LawChunk, VectorStore
 from src.retrieval import HybridRetriever
 
 # 전역 변수로 검색 엔진 초기화
@@ -264,6 +267,212 @@ async def get_law_detail(law_id: str):
     """특정 법령 상세 정보"""
     # TODO: DB에서 법령 상세 조회
     raise HTTPException(status_code=404, detail="법령을 찾을 수 없습니다")
+
+
+def _extract_text_from_pdf(pdf_path: str) -> str:
+    """PDF에서 텍스트 추출"""
+    try:
+        import PyPDF2
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PyPDF2가 설치되지 않았습니다")
+
+    with open(pdf_path, "rb") as file:
+        pdf_reader = PyPDF2.PdfReader(file)
+        text_parts = []
+        for page in pdf_reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text)
+        return "\n".join(text_parts)
+
+
+def _parse_law_articles(text: str, law_name: str, law_id: str) -> List[Dict[str, Any]]:
+    """법령 텍스트를 조문 단위로 파싱"""
+    article_pattern = re.compile(r"제(\d+)조(?:의\d+)?\s*(?:\(([^)]+)\))?")
+    articles = []
+    seen_articles = set()
+    matches = list(article_pattern.finditer(text))
+
+    for i, match in enumerate(matches):
+        article_number = f"제{match.group(1)}조"
+        title = match.group(2) or ""
+
+        article_key = (law_id, article_number)
+        if article_key in seen_articles:
+            continue
+        seen_articles.add(article_key)
+
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        content = text[start:end].strip()
+
+        if len(content) > 10:
+            articles.append({
+                "law_id": law_id,
+                "law_name": law_name,
+                "article_number": article_number,
+                "title": title,
+                "content": content[:2000],
+            })
+
+    return articles
+
+
+def _store_to_supabase(chunks: List[LawChunk], embeddings) -> Dict[str, int]:
+    """청크를 Supabase에 저장"""
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+
+    if not supabase_url or not supabase_key:
+        return {"migrated": 0, "failed": 0, "error": "Supabase 환경변수 미설정"}
+
+    try:
+        from supabase import create_client
+        supabase = create_client(supabase_url, supabase_key)
+    except ImportError:
+        return {"migrated": 0, "failed": 0, "error": "supabase 패키지 미설치"}
+
+    migrated = 0
+    failed = 0
+
+    for i, chunk in enumerate(chunks):
+        try:
+            embedding_list = (
+                embeddings[i].tolist()
+                if hasattr(embeddings[i], "tolist")
+                else list(embeddings[i])
+            )
+
+            data = {
+                "id": chunk.chunk_id,
+                "content": chunk.content,
+                "embedding": embedding_list,
+                "metadata": {
+                    "law_id": chunk.law_id,
+                    "law_name": chunk.law_name,
+                    "article_number": chunk.article_number,
+                    "paragraph_number": chunk.paragraph_number,
+                    "title": chunk.title,
+                    "chunk_type": chunk.chunk_type,
+                    **chunk.metadata,
+                },
+            }
+
+            supabase.table("law_documents").upsert(data).execute()
+            migrated += 1
+        except Exception as e:
+            logger.error(f"Supabase upsert failed for {chunk.chunk_id}: {e}")
+            failed += 1
+
+    return {"migrated": migrated, "failed": failed}
+
+
+@app.post("/upload")
+async def upload_law_pdf(
+    file: UploadFile = File(...),
+    law_name: str = Form(...),
+    law_id: str = Form(""),
+):
+    """
+    법령 PDF 업로드 → 파싱 → 청킹 → 임베딩 → 저장
+
+    전체 파이프라인을 자동으로 수행합니다.
+    """
+    global embedder, vector_store, retriever
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다")
+
+    if embedder is None or vector_store is None:
+        raise HTTPException(status_code=503, detail="RAG 엔진이 초기화되지 않았습니다")
+
+    # 임시 파일로 저장
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        # auto-generate law_id if not provided
+        if not law_id:
+            law_id = re.sub(r"[^a-zA-Z0-9가-힣]", "_", law_name)[:50]
+
+        # 1. PDF 텍스트 추출
+        text = _extract_text_from_pdf(tmp_path)
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="PDF에서 텍스트를 추출할 수 없습니다")
+
+        # 2. 조문 파싱
+        articles = _parse_law_articles(text, law_name, law_id)
+
+        # 3. 청킹
+        chunker = LawChunker()
+        all_chunks: List[LawChunk] = []
+        for article in articles:
+            chunks = chunker.chunk_article(
+                law_id=article["law_id"],
+                law_name=article["law_name"],
+                article_number=article["article_number"],
+                title=article["title"],
+                content=article["content"],
+            )
+            all_chunks.extend(chunks)
+
+        if not all_chunks:
+            raise HTTPException(
+                status_code=400,
+                detail="파싱된 조문이 없습니다. PDF 형식을 확인해주세요."
+            )
+
+        # 4. 임베딩 생성 + ChromaDB 저장
+        vector_store.add_chunks(all_chunks)
+
+        # 5. Supabase 저장
+        texts = [chunk.content for chunk in all_chunks]
+        embeddings = embedder.embed_documents(texts)
+        supabase_result = _store_to_supabase(all_chunks, embeddings)
+
+        # 6. BM25 인덱스 재구축
+        if retriever is not None:
+            stats = vector_store.get_stats()
+            total_docs = stats["total_documents"]
+            documents = []
+            batch_size = 500
+            offset = 0
+            while offset < total_docs:
+                result = vector_store.collection.get(
+                    limit=batch_size,
+                    offset=offset,
+                    include=["documents", "metadatas"],
+                )
+                if not result["documents"]:
+                    break
+                for doc, metadata in zip(result["documents"], result["metadatas"]):
+                    documents.append({
+                        "id": metadata.get("chunk_id", ""),
+                        "content": doc,
+                        "metadata": metadata,
+                    })
+                offset += batch_size
+            retriever.build_bm25_index(documents)
+
+        return {
+            "status": "success",
+            "law_name": law_name,
+            "law_id": law_id,
+            "stats": {
+                "total_text_length": len(text),
+                "articles_found": len(articles),
+                "chunks_created": len(all_chunks),
+                "articles": [
+                    {"article_number": a["article_number"], "title": a["title"]}
+                    for a in articles[:20]
+                ],
+            },
+            "supabase": supabase_result,
+        }
+    finally:
+        os.unlink(tmp_path)
 
 
 if __name__ == "__main__":

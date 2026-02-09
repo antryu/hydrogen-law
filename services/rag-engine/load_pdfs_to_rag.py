@@ -53,8 +53,9 @@ def extract_text_from_pdf(pdf_path: str) -> str:
 def parse_law_text(text: str, law_name: str, law_id: str) -> List[Dict[str, Any]]:
     """법령 텍스트를 조문 단위로 파싱"""
 
-    # 조문 패턴: 제1조, 제2조 등
-    article_pattern = re.compile(r"제(\d+)조\s*\(([^)]+)\)")
+    # 조문 패턴: 제1조, 제2조, 제1조의2 등 (제목이 없는 경우도 포함)
+    article_pattern = re.compile(r"제(\d+)조(?:의\d+)?\s*(?:\(([^)]+)\))?")
+
 
     articles = []
     seen_articles = set()  # 중복 제거용
@@ -64,7 +65,7 @@ def parse_law_text(text: str, law_name: str, law_id: str) -> List[Dict[str, Any]
 
     for i, match in enumerate(matches):
         article_number = f"제{match.group(1)}조"
-        title = match.group(2)
+        title = match.group(2) or ""
 
         # 중복 조문 건너뛰기
         article_key = (law_id, article_number)

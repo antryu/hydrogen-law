@@ -169,7 +169,7 @@ export async function POST(request: Request) {
 
       return {
         article_id: row.id,
-        law_name: row.metadata.law_name || '수소경제육성및수소안전관리에관한법률',
+        law_name: row.metadata.law_name || '(법령명 없음)',
         article_number: row.metadata.article_number || row.id.split('_')[1],
         title: row.metadata.title || '',
         content: row.content,
