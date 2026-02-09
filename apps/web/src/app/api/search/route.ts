@@ -49,28 +49,97 @@ export async function POST(request: Request) {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Call Supabase RPC function for keyword search
-    const { data, error } = await supabase.rpc('search_law_documents', {
-      search_query: sanitizedQuery,
-      max_results: validatedTopK
-    });
-
-    if (error) {
-      console.error('Supabase error:', error);
-      return NextResponse.json(
-        { error: 'Search failed' },
-        { status: 500 }
-      );
-    }
-
-    // Normalize relevance scores to 0-100 range
-    const maxScore = Math.max(...data.map((row: SupabaseSearchResult) => row.relevance_score), 0.0001);
-
     // Parse and limit keywords (support both comma and space separation)
     const keywords = sanitizedQuery
       .split(/[\s,]+/)
       .filter((k: string) => k.length > 0)
       .slice(0, MAX_KEYWORDS);
+
+    // Search each keyword individually and merge results
+    // This fixes the bug where multi-keyword queries (e.g. "수소 안전") returned 0 results
+    // because the SQL LIKE searched for the entire string as one substring
+    let data: SupabaseSearchResult[];
+
+    if (keywords.length <= 1) {
+      // Single keyword: search directly
+      const { data: result, error } = await supabase.rpc('search_law_documents', {
+        search_query: sanitizedQuery,
+        max_results: validatedTopK
+      });
+
+      if (error) {
+        console.error('Supabase error:', error);
+        return NextResponse.json(
+          { error: '검색 중 오류가 발생했습니다' },
+          { status: 500 }
+        );
+      }
+
+      data = result;
+    } else {
+      // Multiple keywords: search each individually and merge
+      const searchPromises = keywords.map(keyword =>
+        supabase.rpc('search_law_documents', {
+          search_query: keyword,
+          max_results: validatedTopK
+        })
+      );
+
+      const searchResults = await Promise.all(searchPromises);
+
+      // Check for errors
+      const firstError = searchResults.find(r => r.error);
+      if (firstError?.error) {
+        console.error('Supabase error:', firstError.error);
+        return NextResponse.json(
+          { error: '검색 중 오류가 발생했습니다' },
+          { status: 500 }
+        );
+      }
+
+      // Merge results: documents matching more keywords get higher combined scores
+      const mergedMap = new Map<string, SupabaseSearchResult & { matchCount: number }>();
+
+      for (const result of searchResults) {
+        if (!result.data) continue;
+        for (const row of result.data as SupabaseSearchResult[]) {
+          const existing = mergedMap.get(row.id);
+          if (existing) {
+            existing.relevance_score += row.relevance_score;
+            existing.matchCount += 1;
+          } else {
+            mergedMap.set(row.id, { ...row, matchCount: 1 });
+          }
+        }
+      }
+
+      // Boost documents that match more keywords
+      for (const entry of mergedMap.values()) {
+        entry.relevance_score *= (1 + (entry.matchCount - 1) * 0.5);
+      }
+
+      data = [...mergedMap.values()]
+        .sort((a, b) => b.relevance_score - a.relevance_score)
+        .slice(0, validatedTopK);
+    }
+
+    if (!data || data.length === 0) {
+      return NextResponse.json({
+        query: sanitizedQuery,
+        total_found: 0,
+        keywords,
+        relevant_laws: [],
+        articles: [],
+        metadata: {
+          search_time_ms: 0,
+          llm_used: false,
+          search_method: 'keyword'
+        }
+      });
+    }
+
+    // Normalize relevance scores to 0-100 range
+    const maxScore = Math.max(...data.map((row: SupabaseSearchResult) => row.relevance_score), 0.0001);
 
     // Build single regex for all keywords (escaped to prevent ReDoS)
     const keywordRegex = keywords.length > 0

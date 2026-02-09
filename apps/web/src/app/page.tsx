@@ -43,7 +43,7 @@ export default function HomePage() {
       setError(
         err instanceof Error
           ? err.message
-          : '서버 연결 실패. 백엔드 서버가 실행 중인지 확인하세요.'
+          : '검색 서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.'
       );
     } finally {
       setLoading(false);
