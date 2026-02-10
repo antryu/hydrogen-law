@@ -6,8 +6,8 @@ import { Clock, FileText, Hash, Scale, ChevronDown, ChevronUp, TableProperties }
 import type { SearchResponse } from '@/types/search';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 
 const CONTENT_PREVIEW_LENGTH = 300;
 
@@ -17,7 +17,6 @@ interface SearchResultsProps {
 
 /** Format legal content: add line breaks before numbered items for readability */
 function formatLegalContent(html: string): string {
-  // Add line breaks before Korean legal numbering patterns
   let formatted = html;
   // Numbered items: 1., 2., 10. etc. (at start or after space)
   formatted = formatted.replace(/(?<=[.\s>])(\d+\.\s)/g, '<br/><br/>$1');
@@ -40,7 +39,6 @@ function isAppendix(article: SearchResponse['articles'][number]): boolean {
 
 function ArticleCard({ article, index }: { article: SearchResponse['articles'][number]; index: number }) {
   const appendix = isAppendix(article);
-  // Appendix: collapsed by default; regular articles: expanded if short
   const [expanded, setExpanded] = useState(false);
 
   const rawSanitized = DOMPurify.sanitize(article.highlighted_content, {
@@ -50,10 +48,9 @@ function ArticleCard({ article, index }: { article: SearchResponse['articles'][n
   const sanitized = appendix ? formatLegalContent(rawSanitized) : rawSanitized;
 
   const isLong = article.content.length > CONTENT_PREVIEW_LENGTH;
-  // Appendix is always collapsible regardless of length
   const collapsible = appendix || isLong;
 
-  // For appendix: extract a short summary (first sentence or ~100 chars)
+  // For appendix: extract a short summary
   const summaryText = (() => {
     if (!appendix) return '';
     const plain = article.content.replace(/\n/g, ' ').trim();
